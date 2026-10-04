@@ -1,0 +1,5 @@
+# This app sits behind a login, so keep it out of search indexes.
+# The directory also needs to exist: the Dockerfile copies it into the runtime
+# image, and `COPY` of a missing path fails the build.
+User-agent: *
+Disallow: /

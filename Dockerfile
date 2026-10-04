@@ -26,12 +26,16 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 
-# The Prisma CLI is needed at runtime: the web container runs
-# `prisma migrate deploy` before starting.
+# The Prisma CLI and tsx are needed at runtime: the web container runs
+# `prisma migrate deploy` and `npm run db:seed` before starting. Both are
+# devDependencies, and npm omits devDependencies whenever NODE_ENV is
+# production -- which this stage sets -- so ask for them explicitly.
+# Without this, `npx prisma` would quietly download the newest Prisma (8.x RC)
+# at container start instead of using the pinned 7.10.0.
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
