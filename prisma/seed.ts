@@ -10,7 +10,13 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
+import type {
+  CourseUncheckedCreateInput,
+  DepartmentUncheckedCreateInput,
+  ProgramUncheckedCreateInput,
+} from "../src/generated/prisma/models";
 import {
+  calculateGpa,
   gradeForPercentage,
   MAX_FINAL_MARKS,
   MAX_INTERNAL_MARKS,
@@ -28,45 +34,59 @@ const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) })
 // Demo content
 // ---------------------------------------------------------------------------
 
-const DEPARTMENTS = [
+// The seed arrays are annotated with the generated create-input types so that a
+// field name typo (e.g. "hours" for "lectureHours") is a compile error rather
+// than a runtime PrismaClientValidationError. TypeScript does not excess-check
+// properties that arrive via a spread, which is exactly how these arrays are
+// consumed below, so without these annotations nothing would catch it.
+type CourseSeed = Omit<CourseUncheckedCreateInput, "programId" | "departmentId"> & {
+  /** Program code, resolved to a programId below. */
+  program: string;
+  /** Department code, resolved to a departmentId below. */
+  dept: string;
+};
+
+type ProgramSeed = Omit<ProgramUncheckedCreateInput, "departmentId"> & { dept: string };
+
+const DEPARTMENTS: DepartmentUncheckedCreateInput[] = [
   { code: "CSE", name: "Computer Science & Engineering", hodName: "Dr. R. Iyer" },
   { code: "ECE", name: "Electronics & Communication", hodName: "Dr. M. Rao" },
   { code: "MEC", name: "Mechanical Engineering", hodName: "Dr. S. Nair" },
 ];
 
-const PROGRAMS = [
+const PROGRAMS: ProgramSeed[] = [
   { code: "BTCS", name: "B.Tech Computer Science", degree: "B.Tech", durationYears: 4, totalCredits: 120, dept: "CSE" },
   { code: "BTEC", name: "B.Tech Electronics", degree: "B.Tech", durationYears: 4, totalCredits: 120, dept: "ECE" },
   { code: "BTME", name: "B.Tech Mechanical", degree: "B.Tech", durationYears: 4, totalCredits: 120, dept: "MEC" },
 ];
 
-const COURSES = [
+const COURSES: CourseSeed[] = [
   // Semester 1 (common)
-  { code: "MA101", title: "Engineering Mathematics I", credits: 4, semester: 1, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "PH101", title: "Engineering Physics", credits: 3, semester: 1, hours: 3, program: "BTCS", dept: "CSE" },
-  { code: "CS101", title: "Programming Fundamentals", credits: 4, semester: 1, hours: 4, program: "BTCS", dept: "CSE" },
+  { code: "MA101", title: "Engineering Mathematics I", credits: 4, semester: 1, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "PH101", title: "Engineering Physics", credits: 3, semester: 1, lectureHours: 3, program: "BTCS", dept: "CSE" },
+  { code: "CS101", title: "Programming Fundamentals", credits: 4, semester: 1, lectureHours: 4, program: "BTCS", dept: "CSE" },
 
   // Semester 3 (core CS)
-  { code: "CS301", title: "Data Structures and Algorithms", credits: 4, semester: 3, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "CS302", title: "Object Oriented Programming", credits: 3, semester: 3, hours: 3, program: "BTCS", dept: "CSE" },
-  { code: "MA301", title: "Engineering Mathematics III", credits: 4, semester: 3, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "CS303", title: "Digital Logic Design", credits: 3, semester: 3, hours: 3, program: "BTCS", dept: "CSE" },
+  { code: "CS301", title: "Data Structures and Algorithms", credits: 4, semester: 3, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "CS302", title: "Object Oriented Programming", credits: 3, semester: 3, lectureHours: 3, program: "BTCS", dept: "CSE" },
+  { code: "MA301", title: "Engineering Mathematics III", credits: 4, semester: 3, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "CS303", title: "Digital Logic Design", credits: 3, semester: 3, lectureHours: 3, program: "BTCS", dept: "CSE" },
 
   // Semester 5
-  { code: "CS501", title: "Database Management Systems", credits: 4, semester: 5, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "CS502", title: "Operating Systems", credits: 4, semester: 5, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "CS503", title: "Computer Networks", credits: 3, semester: 5, hours: 3, program: "BTCS", dept: "CSE" },
-  { code: "CS504", title: "Software Engineering", credits: 3, semester: 5, hours: 3, program: "BTCS", dept: "CSE" },
+  { code: "CS501", title: "Database Management Systems", credits: 4, semester: 5, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "CS502", title: "Operating Systems", credits: 4, semester: 5, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "CS503", title: "Computer Networks", credits: 3, semester: 5, lectureHours: 3, program: "BTCS", dept: "CSE" },
+  { code: "CS504", title: "Software Engineering", credits: 3, semester: 5, lectureHours: 3, program: "BTCS", dept: "CSE" },
 
   // Semester 7
-  { code: "CS701", title: "Machine Learning", credits: 4, semester: 7, hours: 4, program: "BTCS", dept: "CSE" },
-  { code: "CS702", title: "Cloud Computing", credits: 3, semester: 7, hours: 3, program: "BTCS", dept: "CSE" },
+  { code: "CS701", title: "Machine Learning", credits: 4, semester: 7, lectureHours: 4, program: "BTCS", dept: "CSE" },
+  { code: "CS702", title: "Cloud Computing", credits: 3, semester: 7, lectureHours: 3, program: "BTCS", dept: "CSE" },
 
   // A couple of ECE courses so the other programmes are not empty.
-  { code: "EC201", title: "Analog Circuits", credits: 4, semester: 3, hours: 4, program: "BTEC", dept: "ECE" },
-  { code: "EC301", title: "Signals and Systems", credits: 4, semester: 5, hours: 4, program: "BTEC", dept: "ECE" },
-  { code: "ME201", title: "Thermodynamics", credits: 4, semester: 3, hours: 4, program: "BTME", dept: "MEC" },
-  { code: "ME301", title: "Fluid Mechanics", credits: 4, semester: 5, hours: 4, program: "BTME", dept: "MEC" },
+  { code: "EC201", title: "Analog Circuits", credits: 4, semester: 3, lectureHours: 4, program: "BTEC", dept: "ECE" },
+  { code: "EC301", title: "Signals and Systems", credits: 4, semester: 5, lectureHours: 4, program: "BTEC", dept: "ECE" },
+  { code: "ME201", title: "Thermodynamics", credits: 4, semester: 3, lectureHours: 4, program: "BTME", dept: "MEC" },
+  { code: "ME301", title: "Fluid Mechanics", credits: 4, semester: 5, lectureHours: 4, program: "BTME", dept: "MEC" },
 ];
 
 const FIRST_NAMES = [
@@ -329,17 +349,8 @@ async function main() {
   console.log(`  enrollments -> ${created} (${graded} graded, rest awaiting results)`);
 
   // 7. Recompute CGPA -------------------------------------------------------
-  const calculateGpa = (grades: { gradePoints: number | null; credits: number }[]) => {
-    let credits = 0;
-    let points = 0;
-    for (const g of grades) {
-      if (g.gradePoints == null) continue;
-      credits += g.credits;
-      points += g.gradePoints * g.credits;
-    }
-    return credits === 0 ? 0 : Math.round((points / credits) * 100) / 100;
-  };
-
+  // calculateGpa comes from src/lib/grading.ts, the same helper the grade-entry
+  // UI and API use, so a seeded CGPA can never disagree with a recalculated one.
   for (const studentId of studentIds) {
     const enrollments = await prisma.enrollment.findMany({
       where: { studentId, status: "COMPLETED" },
