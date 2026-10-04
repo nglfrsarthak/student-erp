@@ -199,6 +199,33 @@ The full endpoint table is also rendered in-app at **`/api-docs`**.
 
 ---
 
+## Jira project
+
+`scripts/jira/setup.mjs` provisions the tracker through the Atlassian REST API:
+it creates the project, a scrum board, **5 epics**, **17 stories** and their
+task checklists, all mapped to the code in this repository, then moves
+everything to **To Do**.
+
+```powershell
+# 1. Create an API token: https://id.atlassian.com/manage-profile/security/api-tokens
+$env:JIRA_SITE   = "your-domain"          # your-domain.atlassian.net
+$env:JIRA_EMAIL  = "you@example.com"
+$env:JIRA_TOKEN  = "your-api-token"
+$env:JIRA_PROJECT_KEY = "ERP"             # optional, defaults to ERP
+
+# 2. Preview the plan without writing anything
+$env:JIRA_DRY_RUN = "1"; node scripts/jira/setup.mjs
+
+# 3. Create it
+node scripts/jira/setup.mjs
+```
+
+Set `JIRA_DRY_RUN=1` to authenticate and print the target without creating
+anything. Every issue description links back to this repository, and each story
+comment carries its implementation checklist.
+
+---
+
 ## Troubleshooting
 
 **`Cannot apply unknown utility class`** — stale CSS cache; `rm -rf .next` and
