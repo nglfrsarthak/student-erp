@@ -1,0 +1,171 @@
+// Student ERP - data model
+// Prisma 7 `prisma-client` generator: emits plain TypeScript into
+// src/generated/prisma (no generation into node_modules).
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  generatedFileExtension = "ts"
+  // tsx (used by the seed script) cannot resolve the generated ".js" specifiers.
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  FACULTY
+  STUDENT
+}
+
+enum StudentStatus {
+  ACTIVE
+  SUSPENDED
+  GRADUATED
+  DROPPED
+}
+
+enum EnrollmentStatus {
+  ENROLLED
+  COMPLETED
+  DROPPED
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(STUDENT)
+  student      Student?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Academic structure
+// ---------------------------------------------------------------------------
+
+model Department {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  hodName   String?
+  programs  Program[]
+  courses   Course[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Program {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  degree        String
+  durationYears Int      @default(4)
+  totalCredits  Int      @default(120)
+  departmentId  String
+  department    Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  students      Student[]
+  courses       Course[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Course {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  title        String
+  credits      Int
+  semester     Int
+  lectureHours Int      @default(3)
+  programId    String
+  program      Program  @relation(fields: [programId], references: [id], onDelete: Restrict)
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  enrollments  Enrollment[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([programId, semester])
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+model Student {
+  id              String        @id @default(cuid())
+  enrollmentNo    String        @unique
+  firstName       String
+  lastName        String
+  email           String        @unique
+  phone           String?
+  dateOfBirth     DateTime?
+  gender          String?
+  address         String?
+  batchYear       Int
+  currentSemester Int           @default(1)
+  status          StudentStatus @default(ACTIVE)
+  // Denormalised CGPA, recomputed from enrollments whenever grades change.
+  cgpa            Float         @default(0)
+
+  programId String
+  program   Program @relation(fields: [programId], references: [id], onDelete: Restrict)
+
+  // Optional portal login for the student themselves.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  enrollments Enrollment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([programId, currentSemester])
+  @@index([lastName, firstName])
+}
+
+// ---------------------------------------------------------------------------
+// Enrollment + grading
+// ---------------------------------------------------------------------------
+
+model Enrollment {
+  id           String           @id @default(cuid())
+  studentId    String
+  student      Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  semester     Int
+  academicYear String
+  status       EnrollmentStatus @default(ENROLLED)
+
+  // Assessment marks. internal out of 40, final out of 60 -> percentage.
+  internalMarks Float?
+  finalMarks     Float?
+  percentage     Float?
+
+  // Derived by src/lib/grading.ts from `percentage`.
+  letterGrade String?
+  gradePoints Float?
+
+  enrolledAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // A student cannot take the same course twice in the same semester.
+  @@unique([studentId, courseId, semester])
+  @@index([courseId, semester])
+  @@index([academicYear, semester])
+}
