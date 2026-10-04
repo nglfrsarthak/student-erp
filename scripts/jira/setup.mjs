@@ -286,6 +286,15 @@ const PLAN = [
 // ---------------------------------------------------------------------------
 
 async function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  // Enforced here rather than at each call site so that no future call can
+  // accidentally write while "dry run" is on.
+  if (DRY_RUN && method !== "GET") {
+    console.log(`  [dry-run] ${method} ${path}`);
+    return { key: "DRYRUN-1", id: "0", transitions: [] };
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     headers: {
@@ -305,9 +314,22 @@ async function api(path, options = {}) {
   }
 
   if (!res.ok) {
-    const msg =
-      json?.errorMessages?.join(", ") || json?.message || `${res.status} ${res.statusText}`;
-    throw new Error(`${options.method || "GET"} ${path} -> ${msg}`);
+    const parts = [
+      ...(json?.errorMessages || []),
+      ...(json?.errors
+        ? Object.entries(json.errors).map(([field, problem]) => `${field}: ${problem}`)
+        : []),
+    ];
+    if (parts.length) {
+      throw new Error(`${method} ${path} -> ${res.status} ${parts.join("; ")}`);
+    }
+    // Atlassian sometimes returns a bare 400 with an empty body, which on its
+    // own tells you nothing about what was wrong with the request.
+    const detail = String(text || "").trim().slice(0, 300);
+    throw new Error(
+      `${method} ${path} -> ${res.status} ${res.statusText}` +
+        (detail ? ` (empty error body: ${detail})` : " (no error detail returned)"),
+    );
   }
   return json;
 }
@@ -354,6 +376,147 @@ async function addComment(issueKey, text) {
   });
 }
 
+/** Lower-cased summary: the idempotency key for an issue. */
+const summaryKey = (summary) => summary.trim().toLowerCase();
+
+/**
+ * Idempotency key for an issue.
+ *
+ * Child issues are scoped by parent because checklist items and story titles
+ * repeat across epics -- a bare summary would silently treat them as the same
+ * issue and skip creating them.
+ */
+const issueKeyFor = (summary, parentKey) =>
+  parentKey ? `${parentKey}::${summaryKey(summary)}` : summaryKey(summary);
+
+/** summary (lower-cased, parent-scoped) -> issue key, for the whole project. */
+const existing = new Map();
+
+/**
+ * Index every issue already in the project by summary.
+ *
+ * Jira has no unique constraint on summaries, so this is what stops a re-run
+ * after a partial failure from duplicating the whole backlog.
+ */
+async function loadExisting(projectKey) {
+  const jql = `project = "${projectKey}" ORDER BY created ASC`;
+  const record = (payload) => {
+    for (const issue of payload.issues || payload.values || []) {
+      const summary = issue.fields?.summary;
+      if (summary) {
+        existing.set(issueKeyFor(summary, issue.fields?.parent?.key), issue.key);
+      }
+    }
+    return payload;
+  };
+
+  // Current endpoint, paginated with an opaque token.
+  try {
+    let token;
+    for (;;) {
+      const query =
+        `/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}` +
+        `&fields=summary,parent&maxResults=100` +
+        (token ? `&nextPageToken=${encodeURIComponent(token)}` : "");
+      const res = record(await api(query));
+      if (!res.nextPageToken) return;
+      token = res.nextPageToken;
+    }
+  } catch {
+    // Older instances only expose the classic search endpoint.
+  }
+
+  let startAt = 0;
+  for (;;) {
+    const res = record(
+      await api(
+        `/rest/api/3/search?jql=${encodeURIComponent(jql)}` +
+          `&fields=summary,parent&maxResults=100&startAt=${startAt}`,
+      ),
+    );
+    if (res.isLast || startAt + 100 >= (res.total ?? 0)) break;
+    startAt += 100;
+  }
+}
+
+/**
+ * Create an issue, or return the key of the one that already has this summary.
+ *
+ * Atlassian gives no unique constraint on summaries, so idempotency has to be
+ * enforced by the caller. Without this a re-run after a partial failure would
+ * duplicate every epic and story.
+ */
+async function ensureIssue({ projectKey, summary, description, issueTypeName, parent, labels }) {
+  const idKey = issueKeyFor(summary, parent);
+  const found = existing.get(idKey);
+  if (found) return { key: found, created: false };
+
+  const candidates = Array.isArray(issueTypeName) ? issueTypeName : [issueTypeName];
+
+  let lastError;
+  for (const name of candidates) {
+    try {
+      const issue = await createIssue({
+        project: { key: projectKey },
+        ...(parent ? { parent: { key: parent } } : {}),
+        summary,
+        description: adf(description),
+        issuetype: { name },
+        labels,
+      });
+      existing.set(idKey, issue.key);
+      return { key: issue.key, created: true, type: name };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Work out which issue types this project actually accepts.
+ *
+ * Team-managed projects (style "next-gen", simplified=true) have a fixed
+ * hierarchy: an Epic may only contain Task and Subtask. They do list a "Story"
+ * issue type, but creating a Story *under an Epic* is rejected with a 400 whose
+ * body is empty, which looks like a bad request rather than a wrong issue type.
+ * So the story level is a Task there, and the checklist level is spelled
+ * "Subtask" rather than "Sub-task".
+ *
+ * Company-managed projects use Story and Sub-task instead.
+ */
+async function resolveIssueTypes(projectKey) {
+  const project = await api(`/rest/api/3/project/${encodeURIComponent(projectKey)}`);
+  const teamManaged = project.simplified === true || project.style === "next-gen";
+
+  let available = new Set();
+  try {
+    const meta = await api(
+      `/rest/api/3/issue/createmeta?projectKeys=` +
+        `${encodeURIComponent(projectKey)}&expand=projects.issuetypes`,
+    );
+    available = new Set(
+      (meta.projects?.[0]?.issuetypes || []).map((t) => t.name.toLowerCase()),
+    );
+  } catch {
+    // createmeta can be unavailable on very new sites; fall back to defaults.
+  }
+
+  // Only offer a type the project actually has, so failures are not spent on
+  // names that do not exist.
+  const pick = (...names) => names.find((n) => available.size === 0 || available.has(n.toLowerCase()));
+
+  return {
+    teamManaged,
+    epic: pick("Epic"),
+    story: teamManaged ? pick("Task", "Story") : pick("Story", "Task"),
+    // Fall back to Task if the project has no sub-task type at all.
+    subtask: teamManaged
+      ? [pick("Subtask", "Sub-task", "Task"), "Task"]
+      : [pick("Sub-task", "Subtask", "Task"), "Task"],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -370,10 +533,12 @@ async function main() {
   let projectKey = PROJECT_KEY;
   let projectId = null;
 
-  const existing = await api(`/rest/api/3/project/search?keys=${PROJECT_KEY}`);
-  if (existing.values?.length) {
-    projectKey = existing.values[0].key;
-    projectId = existing.values[0].id;
+  // Named `found`, not `existing`: the latter is the module-level issue index
+  // used for idempotency, and shadowing it here broke the summary count.
+  const found = await api(`/rest/api/3/project/search?keys=${PROJECT_KEY}`);
+  if (found.values?.length) {
+    projectKey = found.values[0].key;
+    projectId = found.values[0].id;
     console.log(`Project ${projectKey} already exists - reusing it.`);
   } else {
     const created = await api("/rest/api/3/project", {
@@ -406,76 +571,102 @@ async function main() {
   }
 
   // 4. Issues ---------------------------------------------------------------
-  const createdKeys = [];
+  const types = await resolveIssueTypes(projectKey);
+  console.log(
+    `Project style: ${types.teamManaged ? "team-managed (Task is the story unit)" : "company-managed"}\n`,
+  );
+
+  await loadExisting(projectKey);
+  console.log(`Indexed ${existing.size} existing issue(s) to make this re-runnable.\n`);
+
+  const freshKeys = [];
+  let epicCount = 0;
   let storyCount = 0;
   let taskCount = 0;
 
   for (const group of PLAN) {
     console.log(`\n${group.epic}`);
 
-    const epic = await createIssue({
-      project: { key: projectKey },
+    const epic = await ensureIssue({
+      projectKey,
       summary: group.epic,
-      description: adf(group.epic),
-      issuetype: { name: "Epic" },
+      description: group.epic,
+      issueTypeName: types.epic,
       labels: ["student-erp"],
     });
-    createdKeys.push(epic.key);
-    console.log(`  [epic] ${epic.key}  ${group.epic}`);
+    if (epic.created) {
+      freshKeys.push(epic.key);
+      epicCount++;
+    }
+    console.log(
+      `  [epic] ${epic.key}  ${group.epic}${epic.created ? "" : "   (already exists)"}`,
+    );
 
     for (const story of group.stories) {
-      const issue = await createIssue({
-        project: { key: projectKey },
-        parent: { key: epic.key },
+      const issue = await ensureIssue({
+        projectKey,
         summary: story.summary,
-        description: adf(story.description),
-        issuetype: { name: "Story" },
+        description: story.description,
+        issueTypeName: types.story,
+        parent: epic.key,
         labels: ["student-erp", ...(story.labels || [])],
       });
-      createdKeys.push(issue.key);
-      storyCount++;
+      if (issue.created) {
+        freshKeys.push(issue.key);
+        storyCount++;
+      }
 
+      // Checklist items hang off the story-level issue, not the epic. Parenting
+      // them to the epic would flatten all of them onto the epic and lose which
+      // story each belongs to; as sub-tasks they render as a real checklist.
       const taskKeys = [];
       for (const title of story.tasks) {
-        const task = await createIssue({
-          project: { key: projectKey },
-          parent: { key: epic.key },
+        const task = await ensureIssue({
+          projectKey,
           summary: title,
-          description: adf(`Task for story: ${story.summary}`),
-          issuetype: { name: "Task" },
+          description: `Task for story: ${story.summary}`,
+          issueTypeName: types.subtask,
+          parent: issue.key,
           labels: ["student-erp"],
         });
         taskKeys.push(task.key);
-        createdKeys.push(task.key);
-        taskCount++;
+        if (task.created) {
+          freshKeys.push(task.key);
+          taskCount++;
+        }
       }
 
-      await addComment(
-        issue.key,
-        [
-          `Source: https://github.com/nglfrsarthak/student-erp`,
-          "",
-          "Checklist:",
-          ...story.tasks.map((t, i) => `${i + 1}. ${t}`),
-        ].join("\n"),
-      );
+      if (issue.created) {
+        await addComment(
+          issue.key,
+          [
+            `Source: https://github.com/nglfrsarthak/student-erp`,
+            "",
+            "Checklist:",
+            ...story.tasks.map((t, i) => `${i + 1}. ${t}`),
+          ].join("\n"),
+        );
+      }
 
-      console.log(`  [story] ${issue.key}  ${story.summary}  (${taskKeys.length} tasks)`);
+      console.log(
+        `  [story] ${issue.key}  ${story.summary}  (${taskKeys.length} sub-tasks)` +
+          (issue.created ? "" : "   (already exists)"),
+      );
     }
   }
 
-  // 5. Move the work into "To Do" -------------------------------------------
+  // 5. Move newly created work into "To Do" ----------------------------------
   let moved = 0;
-  for (const key of createdKeys) {
+  for (const key of freshKeys) {
     if (await transition(key, "To Do")) moved++;
   }
 
   console.log(`\n${"-".repeat(56)}`);
   console.log(`Project : ${BASE}/jira/software/projects/${projectKey}`);
-  console.log(`Epics   : ${PLAN.length}`);
-  console.log(`Stories : ${storyCount}`);
-  console.log(`Tasks   : ${taskCount}`);
-  console.log(`Moved to "To Do": ${moved}/${createdKeys.length}`);
+  console.log(`Epics   : ${epicCount} created, ${PLAN.length} in plan`);
+  console.log(`Stories : ${storyCount} created`);
+  console.log(`Sub-tasks: ${taskCount} created`);
+  console.log(`Moved new issues to "To Do": ${moved}/${freshKeys.length}`);
   console.log(`Repo    : https://github.com/nglfrsarthak/student-erp`);
 }
 

@@ -15,8 +15,10 @@ jobs:
     name: Typecheck and build
     runs-on: ubuntu-latest
 
-    # `next build` only needs these to *exist*; it never connects at build time
-    # because every data page is force-dynamic.
+    # The app must be importable with no environment configured at all:
+    # `next build` imports every page module, and pages are force-dynamic, so
+    # nothing should need a database connection to build. The docker job below
+    # is the real check for this, since a Docker build has no DATABASE_URL.
     env:
       DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp
       AUTH_SECRET: ci-only-secret-not-used-at-runtime-0123456789
@@ -107,3 +109,45 @@ jobs:
 
       - name: Seed
         run: npm run db:seed
+
+  # The Dockerfile is the only thing that verifies the image actually builds and
+  # boots. It is also the only environment with no DATABASE_URL at build time,
+  # which is exactly what caught src/lib/prisma.ts throwing at import.
+  docker:
+    name: Docker stack builds and serves
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for the app to answer
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login || echo 000)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "App is serving."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::App never became ready."
+          docker compose logs
+          exit 1
+
+      - name: Confirm the database was seeded
+        run: |
+          docker compose exec -T db psql -U erp -d student_erp \
+            -c 'SELECT count(*) AS students FROM "Student";' \
+            -c 'SELECT count(*) AS courses FROM "Course";'
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

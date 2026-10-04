@@ -243,9 +243,26 @@ $env:JIRA_DRY_RUN = "1"; node scripts/jira/setup.mjs
 node scripts/jira/setup.mjs
 ```
 
-Set `JIRA_DRY_RUN=1` to authenticate and print the target without creating
-anything. Every issue description links back to this repository, and each story
-comment carries its implementation checklist.
+Set `JIRA_DRY_RUN=1` to authenticate, read the project and print the plan
+without writing anything.
+
+Notes on how it behaves:
+
+- **Re-running is safe.** It indexes the existing project by summary first and
+  skips anything already there, so a run that fails halfway can simply be
+  repeated. Checklist items are scoped to their parent story, because titles
+  like "Recalculate CGPA for distinct affected students" appear under more than
+  one story.
+- **It adapts to the project style.** A team-managed project (`style=next-gen`,
+  which is what the Jira wizard creates by default) does not accept a `Story`
+  under an `Epic` — only `Task` and `Subtask` — so there the 17 stories are
+  created as `Task` and the checklists as `Subtask`. A company-managed project
+  gets `Story` and `Sub-task`. The script detects which and adapts.
+- It reuses an existing project with a matching key rather than creating a
+  second one.
+
+Every issue description links back to this repository, and each story comment
+carries its implementation checklist.
 
 ---
 
