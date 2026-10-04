@@ -16,6 +16,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "db:shadow": "node scripts/create-shadow-db.mjs",
     "setup": "prisma generate && prisma migrate deploy && npm run db:seed"
   },
   "dependencies": {

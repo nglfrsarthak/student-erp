@@ -15,6 +15,12 @@ jobs:
     name: Typecheck and build
     runs-on: ubuntu-latest
 
+    # `next build` only needs these to *exist*; it never connects at build time
+    # because every data page is force-dynamic.
+    env:
+      DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp
+      AUTH_SECRET: ci-only-secret-not-used-at-runtime-0123456789
+
     steps:
       - uses: actions/checkout@v4
 
@@ -34,16 +40,17 @@ jobs:
       - name: Rebuild dependencies with scripts enabled
         run: npm rebuild prisma @prisma/engines esbuild
 
+      # The generated client lives in src/generated/prisma, which is
+      # gitignored, so a fresh checkout has no client to typecheck against.
+      # `npm run build` also generates it, but typecheck runs first.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
       - name: Typecheck
         run: npm run typecheck
 
-      # `next build` only needs DATABASE_URL to exist; it never connects at
-      # build time because every data page is force-dynamic.
       - name: Build
         run: npm run build
-        env:
-          DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp
-          AUTH_SECRET: ci-only-secret-not-used-at-runtime-0123456789
 
   migrate:
     name: Migration is in sync with schema
@@ -64,6 +71,13 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+    env:
+      DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp
+      # `--from-migrations` replays the whole migration history into a shadow
+      # database. Prisma 7 dropped the `--shadow-database-url` flag, so the URL
+      # has to come from prisma.config.ts, which reads this variable.
+      SHADOW_DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp_shadow
+
     steps:
       - uses: actions/checkout@v4
 
@@ -78,8 +92,9 @@ jobs:
 
       - name: Apply migrations
         run: npx prisma migrate deploy
-        env:
-          DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp
+
+      - name: Create shadow database
+        run: node scripts/create-shadow-db.mjs
 
       # Fails if the committed migrations no longer describe the schema, which
       # catches "someone edited schema.prisma and forgot to add a migration".
@@ -92,5 +107,3 @@ jobs:
 
       - name: Seed
         run: npm run db:seed
-        env:
-          DATABASE_URL: postgresql://erp:erp_secret@localhost:5432/student_erp

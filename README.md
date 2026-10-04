@@ -98,7 +98,30 @@ npm run dev                   # http://localhost:3000
 | `npm run db:deploy` | Apply pending migrations (prod/CI) |
 | `npm run db:seed` | Load demo data (idempotent) |
 | `npm run db:studio` | Browse the database in Prisma Studio |
+| `npm run db:shadow` | (Re)create the shadow database used by `db:migrate` |
 | `npm run setup` | `generate` + `deploy` + `seed` in one go |
+
+### The shadow database
+
+`npm run db:migrate` (`prisma migrate dev`) needs to replay your migration
+history into a disposable database in order to detect drift, and
+`prisma migrate diff --from-migrations` does the same. Prisma 7 removed the
+`--shadow-database-url` flag, so the location is configured in
+`prisma.config.ts` from the `SHADOW_DATABASE_URL` environment variable.
+
+Set it once and create the database:
+
+```powershell
+# .env
+SHADOW_DATABASE_URL="postgresql://erp:erp_secret@localhost:5432/student_erp_shadow"
+
+npm run db:shadow
+```
+
+It is optional. If you leave it unset, Prisma creates and drops a throwaway
+database itself, which needs `CREATEDB` rights on your Postgres role. Only
+`db:migrate` and the CI drift check need it — `db:deploy`, `db:seed` and the
+running app do not.
 
 ---
 
