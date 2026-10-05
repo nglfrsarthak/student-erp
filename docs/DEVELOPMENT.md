@@ -229,7 +229,7 @@ The full endpoint table is also rendered in-app at **`/api-docs`**.
 ## Jira project
 
 `scripts/jira/setup.mjs` provisions the tracker through the Atlassian REST API:
-it creates the project, a scrum board, **5 epics**, **17 stories** and their
+it creates the project, a scrum board, **5 epics**, **18 stories** and their
 task checklists, all mapped to the code in this repository, then moves
 everything to **To Do**.
 
@@ -259,7 +259,7 @@ Notes on how it behaves:
   one story.
 - **It adapts to the project style.** A team-managed project (`style=next-gen`,
   which is what the Jira wizard creates by default) does not accept a `Story`
-  under an `Epic` — only `Task` and `Subtask` — so there the 17 stories are
+  under an `Epic` — only `Task` and `Subtask` — so there the 18 stories are
   created as `Task` and the checklists as `Subtask`. A company-managed project
   gets `Story` and `Sub-task`. The script detects which and adapts.
 - It reuses an existing project with a matching key rather than creating a

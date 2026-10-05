@@ -214,7 +214,7 @@ src/
 That third job exists because the first two never touch the Dockerfile — two
 real build bugs got through CI until the image was actually built.
 
-**Jira** mirrors the codebase: 5 epics, 17 stories and 70 sub-tasks, generated
+**Jira** mirrors the codebase: 5 epics, 18 stories and 70 sub-tasks, generated
 from the same plan by `scripts/jira/setup.mjs` and re-runnable without creating
 duplicates.
 
