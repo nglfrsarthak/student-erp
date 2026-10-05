@@ -2,6 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import {
+  MAX_FINAL_MARKS,
+  MAX_INTERNAL_MARKS,
+  gradeForPercentage,
+  percentageFromMarks,
+} from "@/lib/grading";
 
 type Row = {
   enrollmentId: string;
@@ -16,26 +22,17 @@ type Row = {
   status: string;
 };
 
-const MAX_INTERNAL = 40;
-const MAX_FINAL = 60;
-
-/** Mirror of src/lib/grading.ts so the grid can preview grades before saving. */
-const SCALE = [
-  { min: 90, letter: "A+", points: 4.0 },
-  { min: 85, letter: "A", points: 4.0 },
-  { min: 80, letter: "B+", points: 3.5 },
-  { min: 75, letter: "B", points: 3.0 },
-  { min: 70, letter: "C", points: 2.5 },
-  { min: 65, letter: "C-", points: 2.0 },
-  { min: 60, letter: "D", points: 1.0 },
-  { min: 0, letter: "F", points: 0.0 },
-] as const;
+// The grade scale lives in src/lib/grading.ts and is shared with the server.
+// The grid previews with the *same* functions the API will use, so a letter
+// grade can never differ between what the user sees and what gets stored.
+const MAX_INTERNAL = MAX_INTERNAL_MARKS;
+const MAX_FINAL = MAX_FINAL_MARKS;
 
 function preview(internal: number | null, final: number | null) {
-  if (internal == null || final == null) return null;
-  const pct = Math.round(((internal + final) / (MAX_INTERNAL + MAX_FINAL)) * 100 * 100) / 100;
-  const band = SCALE.find((b) => pct >= b.min) ?? SCALE[SCALE.length - 1];
-  return { percentage: pct, letterGrade: band.letter, gradePoints: band.points };
+  const percentage = percentageFromMarks(internal, final);
+  if (percentage == null) return null;
+  const { letterGrade, gradePoints } = gradeForPercentage(percentage);
+  return { percentage, letterGrade, gradePoints };
 }
 
 type Draft = { internalMarks: string; finalMarks: string };
