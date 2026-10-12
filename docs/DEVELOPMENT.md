@@ -218,7 +218,11 @@ The full endpoint table is also rendered in-app at **`/api-docs`**.
 
 - Passwords are bcrypt hashed (cost 10).
 - Sessions are HS256 JWTs in an httpOnly, `SameSite=Lax` cookie — unreadable from
-  JavaScript. `secure` is enabled automatically in production.
+  JavaScript. The `secure` flag is derived from the scheme the request arrived
+  on, not `NODE_ENV`: `x-forwarded-proto` when a proxy sets it, otherwise the
+  request URL. A production build served over plain HTTP must not set `secure`,
+  because browsers refuse to store a Secure cookie from an insecure origin and
+  the session silently never persists.
 - `AUTH_SECRET` must be ≥32 characters or the app throws at startup.
 - Login does not reveal whether an email exists, and runs a dummy bcrypt
   compare when the user is unknown to keep the timing flat.

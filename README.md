@@ -224,8 +224,10 @@ duplicates.
 
 - Passwords are bcrypt hashed (cost 10); login does not reveal whether an email
   exists and runs a dummy compare to keep timing flat.
-- Sessions are HS256 JWTs in an httpOnly cookie, unreadable from JavaScript;
-  `secure` turns on automatically in production.
+- Sessions are HS256 JWTs in an httpOnly cookie, unreadable from JavaScript.
+  The `secure` flag follows the scheme the request actually arrived on, so a
+  plain-HTTP deployment (Docker on a LAN IP) still works and a reverse proxy
+  reporting `x-forwarded-proto: https` still gets a Secure cookie.
 - `AUTH_SECRET` must be ≥32 characters or the app refuses to start.
 - Every write is zod-validated and role-checked; all SQL is parameterised.
 
