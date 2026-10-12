@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { createSessionToken, SESSION_COOKIE } from "@/lib/auth";
+import { createSessionToken, isSecureRequest, SESSION_COOKIE } from "@/lib/auth";
 import { authenticate } from "@/lib/users";
 import { loginSchema } from "@/lib/validation";
 import { fail, handle, ok, fromZodError } from "@/lib/api";
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     store.set(SESSION_COOKIE.name, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecureRequest(request),
       path: "/",
       maxAge: SESSION_COOKIE.maxAge,
     });

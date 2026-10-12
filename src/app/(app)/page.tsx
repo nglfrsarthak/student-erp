@@ -7,8 +7,29 @@ import { PASS_PERCENTAGE } from "@/lib/grading";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+/**
+ * Why the visitor was bounced back here. requireRole() appends one of these
+ * codes; anything it does not recognise renders no notice at all, so the query
+ * parameter can never inject content into the page.
+ */
+const DENIED_NOTICE: Record<string, string> = {
+  admin: "You need administrator access to open that page.",
+  staff: "That page is restricted to administrator and faculty accounts.",
+};
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ denied?: string }>;
+}) {
   const session = await requireSession();
+  const { denied } = await searchParams;
+  const deniedMessage = denied ? DENIED_NOTICE[denied] : undefined;
+
+  // Adding a student is an admin-only action, so do not offer the button to
+  // anyone else - it previously bounced faculty and students back here in
+  // silence, which read as a broken button.
+  const canAddStudent = session.role === "ADMIN";
 
   const [
     studentCount,
@@ -78,11 +99,43 @@ export default async function DashboardPage() {
         title={`Welcome back, ${session.name.split(" ")[0]}`}
         subtitle="Live figures pulled straight from the database."
         action={
-          <Link href="/students/new" className="btn-primary">
-            Add student
-          </Link>
+          canAddStudent ? (
+            <Link href="/students/new" className="btn-primary">
+              Add student
+            </Link>
+          ) : null
         }
       />
+
+      {deniedMessage ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.7}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"
+          >
+            <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+          </svg>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-900">Not permitted</p>
+            <p className="mt-0.5 text-sm text-amber-800">{deniedMessage}</p>
+          </div>
+          <Link
+            href="/"
+            className="text-xs font-medium text-amber-900 hover:underline"
+          >
+            Dismiss
+          </Link>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
